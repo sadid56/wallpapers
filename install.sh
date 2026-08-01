@@ -19,7 +19,7 @@ warn() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Get script source directory to handle calls from anywhere
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd 2>/dev/null || pwd )"
 SRC_WALLPAPERS="$SCRIPT_DIR/wallpapers"
 DEST_PICTURES="$HOME/Pictures"
 DEST_WALLPAPER="$DEST_PICTURES/wallpaper"
@@ -28,9 +28,54 @@ echo -e "${PURPLE}=============================================${NC}"
 echo -e "${PURPLE}     Wallpaper Installation Script           ${NC}"
 echo -e "${PURPLE}=============================================${NC}"
 
-# Check if source directory exists
+# Setup temporary directory cleanup in case of remote execution
+TEMP_DIR=""
+cleanup() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+trap cleanup EXIT
+
+# Check if source directory exists locally, if not, fetch it from GitHub
 if [ ! -d "$SRC_WALLPAPERS" ]; then
-    error "Source directory '$SRC_WALLPAPERS' not found! Make sure you are running the script from within the cloned repository."
+    info "Local wallpaper source not found. Downloading wallpaper collection from GitHub..."
+    
+    # Create temp directory
+    TEMP_DIR=$(mktemp -d)
+    
+    # Attempt to git clone first
+    if command -v git &>/dev/null; then
+        info "Cloning wallpaper repository..."
+        if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --connect-timeout 5 https://github.com/sadid56/wallpaper.git "$TEMP_DIR/wallpaper" &>/dev/null; then
+            SRC_WALLPAPERS="$TEMP_DIR/wallpaper/wallpapers"
+        fi
+    fi
+    
+    # Fallback to wget/curl zip download if clone failed or git is not present
+    if [ ! -d "$SRC_WALLPAPERS" ]; then
+        info "Downloading repository zip archive..."
+        if command -v curl &>/dev/null; then
+            curl -sSL --connect-timeout 5 https://github.com/sadid56/wallpaper/archive/refs/heads/main.zip -o "$TEMP_DIR/archive.zip"
+        elif command -v wget &>/dev/null; then
+            wget -q --timeout=5 https://github.com/sadid56/wallpaper/archive/refs/heads/main.zip -O "$TEMP_DIR/archive.zip"
+        else
+            error "Neither curl, wget, nor git is installed on this system. Cannot download wallpapers."
+            exit 1
+        fi
+        
+        if command -v unzip &>/dev/null; then
+            unzip -q "$TEMP_DIR/archive.zip" -d "$TEMP_DIR"
+            SRC_WALLPAPERS="$TEMP_DIR/wallpaper-main/wallpapers"
+        else
+            error "unzip command not found. Cannot extract downloaded zip archive."
+            exit 1
+        fi
+    fi
+fi
+
+if [ ! -d "$SRC_WALLPAPERS" ]; then
+    error "Failed to retrieve wallpaper source directory."
     exit 1
 fi
 
